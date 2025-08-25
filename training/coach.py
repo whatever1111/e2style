@@ -44,8 +44,8 @@ class Coach:
 		self.mse_loss = nn.MSELoss().to(self.device).eval()
 
 		# Initialize optimizer
-		self.optimizer = self.configure_optimizers()
-
+		#self.optimizer = self.configure_optimizers()
+		self.optimizer = self.configure_optimizers_frozen()
 		# Initialize dataset
 		self.train_dataset, self.test_dataset = self.configure_datasets()
 		self.train_dataloader = DataLoader(self.train_dataset,
@@ -54,7 +54,7 @@ class Coach:
 										   num_workers=int(self.opts.workers),
 										   drop_last=True)
 		self.test_dataloader = DataLoader(self.test_dataset,
-										  batch_size=self.opts.test_batch_size,
+										  batch_size=self.opts.batch_size,
 										  shuffle=False,
 										  num_workers=int(self.opts.test_workers),
 										  drop_last=True)
@@ -74,7 +74,7 @@ class Coach:
 	def train(self):
 		self.net.eval()
 		if self.opts.training_stage == 1:
-			self.net.encoder_firststage.train()
+			self.net.student_encoder_firststage.train()
 		else:
 			self.net.encoder_refinestage_list[self.opts.training_stage-2].train()
 		while self.global_step < self.opts.max_steps:
@@ -83,14 +83,14 @@ class Coach:
 				x, y = batch
 				x, y = x.to(self.device).float(), y.to(self.device).float()
 				y_hat, latent = self.net.forward(x, return_latents=True)
-				loss, loss_dict, id_logs = self.calc_loss(x, y, y_hat, latent)
+				loss, loss_dict, id_logs = self.calc_loss(x, y, y_hat, latent)   
 				loss.backward()
 				self.optimizer.step()
 
 				# Logging related
 				if self.global_step % self.opts.image_interval == 0 or (
-						self.global_step < 1000 and self.global_step % 25 == 0):
-					self.parse_and_log_images(id_logs, x, y, y_hat, title='images/train/faces')
+						self.global_step < 1000 and self.global_step % 500 == 0):
+					self.parse_and_log_images(id_logs, x, y, y_hat, title='images/train/faces')   
 				if self.global_step % self.opts.board_interval == 0:
 					self.print_metrics(loss_dict, prefix='train')
 					self.log_metrics(loss_dict, prefix='train')
@@ -120,7 +120,8 @@ class Coach:
 		agg_loss_dict = []
 		for batch_idx, batch in enumerate(self.test_dataloader):
 			x, y = batch
-
+			if batch_idx % 100 == 0:
+				print(f'[Validate] Now processing batch {batch_idx}...',flush=True)
 			with torch.no_grad():
 				x, y = x.to(self.device).float(), y.to(self.device).float()
 				y_hat, latent = self.net.forward(x, return_latents=True)
@@ -135,7 +136,7 @@ class Coach:
 			# For first step just do sanity test on small amount of data
 			if self.global_step == 0 and batch_idx >= 4:
 				if self.opts.training_stage == 1:
-					self.net.encoder_firststage.train()
+					self.net.student_encoder_firststage.train()
 				else:
 					self.net.encoder_refinestage_list[self.opts.training_stage-2].train()
 				return None  # Do not log, inaccurate in first batch
@@ -145,7 +146,7 @@ class Coach:
 		self.print_metrics(loss_dict, prefix='test')
 
 		if self.opts.training_stage == 1:
-			self.net.encoder_firststage.train()
+			self.net.student_encoder_firststage.train()
 		else:
 			self.net.encoder_refinestage_list[self.opts.training_stage-2].train()
 		return loss_dict
@@ -154,22 +155,61 @@ class Coach:
 		save_name = 'best_model.pt' if is_best else 'latest_model.pt'
 		save_dict = self.__get_save_dict()
 		checkpoint_path = os.path.join(self.checkpoint_dir, save_name)
+		
+		#防止覆盖
+		orig = os.path.abspath(getattr(self.opts, "checkpoint_path", ""))
+		dst  = os.path.abspath(checkpoint_path)
+		if orig and orig == dst:
+			raise RuntimeError(f"Refuse to overwrite the source checkpoint: {dst}")
 		torch.save(save_dict, checkpoint_path)
+		
+		if (self.global_step % self.opts.ckpt_every == 0) or is_best or (self.global_step == self.opts.max_steps):
+			step_name = f"checkpoint_step{self.global_step:07d}.pt"
+			step_path = os.path.join(self.checkpoint_dir, step_name)
+			torch.save(save_dict, step_path)
 		with open(os.path.join(self.checkpoint_dir, 'timestamp.txt'), 'a') as f:
 			if is_best:
 				f.write('**Best**: Step - {}, Loss - {:.3f} \n{}\n'.format(self.global_step, self.best_val_loss, loss_dict))
 			else:
 				f.write('Step - {}, \n{}\n'.format(self.global_step, loss_dict))
 
+	def configure_optimizers_frozen(self):   #frozen optical layer & stage=1
+		params_to_train = []
+		if self.opts.training_stage == 1:
+			print("INFO: Configuring optimizer for Stage 1 (student_encoder_firststage).")
+			if self.opts.training_optical:
+				print("INFO: Training ALL layers of the student encoder, including 'input_layer'.")		
+				params_to_train.extend(list(self.net.student_encoder_firststage.parameters()))
+			else:
+				print("INFO: The 'input_layer' will be FROZEN.")
+				for name, param in self.net.student_encoder_firststage.named_parameters():
+					if "input_layer" in name:
+						param.requires_grad = False
+					else:
+						params_to_train.append(param)
+						
+		if self.opts.train_decoder:
+			print("INFO: Decoder parameters will also be trained.")
+			params_to_train.extend(list(self.net.decoder.parameters()))
+		else:
+			for param in self.net.decoder.parameters():
+				param.requires_grad = False
+		if self.opts.optim_name == 'adam':
+			optimizer = torch.optim.Adam(params_to_train, lr=self.opts.learning_rate)
+		else:
+			optimizer = Ranger(params_to_train, lr=self.opts.learning_rate,weight_decay=1e-4)
+
+		return optimizer
+					
 	def configure_optimizers(self):
-		params = list(self.net.encoder_firststage.parameters()) if self.opts.training_stage == 1 else list(self.net.encoder_refinestage_list[self.opts.training_stage-2].parameters())
+		params = list(self.net.teacher_encoder_firststage.parameters()) if self.opts.training_stage == 1 else list(self.net.encoder_refinestage_list[self.opts.training_stage-2].parameters())
 		if self.opts.train_decoder:
 			params += list(self.net.decoder.parameters())
 		else:
 			for param in self.net.decoder.parameters():
 				param.requires_grad = False
 		if self.opts.training_stage > 1:
-			for param in self.net.encoder_firststage.parameters():
+			for param in self.net.teacher_encoder_firststage.parameters():
 				param.requires_grad = False
 		if self.opts.training_stage > 2:
 			for idx in range(self.opts.training_stage-2):
@@ -207,6 +247,7 @@ class Coach:
 		loss_dict = {}
 		loss = 0.0
 		id_logs = None
+
 		if self.opts.id_lambda > 0:
 			loss_id = self.id_loss(y_hat, y)
 			loss_dict['loss_id'] = float(loss_id)
@@ -274,12 +315,22 @@ class Coach:
 		fig.savefig(path)
 		plt.close(fig)
 
-	def __get_save_dict(self):
+	def __get_save_dict(self):    #warning:training distilling 
+		full_state_dict = self.net.state_dict()   #global
+		'''
+		filtered_state_dict = {    #防止将其他名称保存下来
+			k: v for k, v in full_state_dict.items()
+			if k.startswith("student_encoder_firststage") or
+			k.startswith("decoder")
+		}
+		'''
 		save_dict = {
-			'state_dict': self.net.state_dict(),
+			'state_dict': full_state_dict,
 			'opts': vars(self.opts)
 		}
-		# save the latent avg in state_dict for inference if truncation of w was used during training
-		if self.opts.start_from_latent_avg:
+		
+		# 保存 latent_avg（无前缀，另存）
+		if self.opts.start_from_latent_avg and hasattr(self.net, 'latent_avg'):
 			save_dict['latent_avg'] = self.net.latent_avg
+
 		return save_dict

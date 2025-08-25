@@ -86,7 +86,7 @@ def run():
 
 				if opts.couple_outputs or global_i % 100 == 0:
 					input_im = log_input_image(input_batch[i], opts)
-					resize_amount = (256, 256) if opts.resize_outputs else (1024, 1024)
+					resize_amount = (1024, 1024) if opts.resize_outputs else (256, 256)    #由于我没有在训练时对testresize操作  所以暂时交换一下
 					if opts.resize_factors is not None:
 						# for super resolution, save the original, down-sampled, and output
 						source = Image.open(im_path)

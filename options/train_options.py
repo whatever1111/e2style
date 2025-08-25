@@ -39,15 +39,39 @@ class TrainOptions:
 		self.parser.add_argument('--stylegan_weights', default=model_paths['stylegan_ffhq'], type=str, help='Path to StyleGAN model weights')
 		self.parser.add_argument('--checkpoint_path', default=None, type=str, help='Path to E2Style model checkpoint')
 
-		self.parser.add_argument('--max_steps', default=500000, type=int, help='Maximum number of training steps')
-		self.parser.add_argument('--image_interval', default=100, type=int, help='Interval for logging train images during training')
+		self.parser.add_argument('--max_steps', default=310000, type=int, help='Maximum number of training steps')
+		self.parser.add_argument('--image_interval', default=500, type=int, help='Interval for logging train images during training')
 		self.parser.add_argument('--board_interval', default=50, type=int, help='Interval for logging metrics to tensorboard')
 		self.parser.add_argument('--val_interval', default=1000, type=int, help='Validation interval')
 		self.parser.add_argument('--save_interval', default=None, type=int, help='Model checkpoint interval')
+#KD Experiment		
+		# arguments for KD LOSS
+		self.parser.add_argument('--latent_distill_lambda',default=1.2,type=float, help='latent code loss')
+		self.parser.add_argument('--feature_distill_lambda',default=0,type=float, help='feature code loss')
+		self.parser.add_argument('--kd_l1_lambda',default=1.1,type=float,help='kd_l1_loss')
+		self.parser.add_argument('--kd_lpips_lambda',default=2,type=float)
+		self.parser.add_argument('--kd_simi_lambda',default=3,type=float)
+		
+		# arguments for training_distilling
+		self.parser.add_argument('--training_optical',default=False,type=bool, help='frozen optical layer')
+		self.parser.add_argument('--distill_mode',default=False,type=bool,help='Distilling')
+		
+		# arguments in kd_simi_loss
+		self.parser.add_argument('--mimic_layer',type=int, nargs='*', default=[2,3,4,5])
+		self.parser.add_argument('--simi_loss',type=str,choices=['mse', 'kl'], default='kl')
+
+		# arguments in kd_l1_lambda
+		self.parser.add_argument('--kd_mode', type=str, default='Intermediate')
+		
+		# arguments for cal_directions
+		self.parser.add_argument('--offset_mode',type=str,default='main')
+		self.parser.add_argument('--add_offset',type=bool,default=False,help="random or cal")
+		self.parser.add_argument('--offset_weight', type=float, default=0.1)
 
 		# arguments for super-resolution
 		self.parser.add_argument('--resize_factors', type=str, default=None,
 		                         help='For super-res, comma-separated resize factors to use for inference.')
+		self.parser.add_argument('--ckpt_every',type=int,default=20000)
 
 	def parse(self):
 		opts = self.parser.parse_args()

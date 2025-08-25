@@ -166,7 +166,7 @@ def extract_on_paths(file_paths):
 
 def parse_args():
 	parser = ArgumentParser(add_help=False)
-	parser.add_argument('--num_threads', type=int, default=1)
+	parser.add_argument('--num_threads', type=int, default=16)
 	parser.add_argument('--root_path', type=str, default='')
 	args = parser.parse_args()
 	return args

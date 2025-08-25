@@ -472,6 +472,10 @@ class Generator(nn.Module):
             styles,
             return_latents=False,
             return_features=False,
+            return_rgb_list=False,  #new
+            return_feat=False,      #new
+            offsets=None,           #new
+            return_rgb_fea=False,    #new
             inject_index=None,
             truncation=1,
             truncation_latent=None,
@@ -517,29 +521,44 @@ class Generator(nn.Module):
 
             latent = torch.cat([latent, latent2], 1)
 
+        batch = latent.size(0)
+        if offsets is not None:
+            latent = torch.cat([latent, latent+offsets], dim=0)
+
         out = self.input(latent)
         out = self.conv1(out, latent[:, 0], noise=noise[0])
 
+        rgb_img_list, feat_list = [], [] 
         skip = self.to_rgb1(out, latent[:, 1])
-
+        rgb_img_list.append(skip[:batch])
+        
         i = 1
         for conv1, conv2, noise1, noise2, to_rgb in zip(
                 self.convs[::2], self.convs[1::2], noise[1::2], noise[2::2], self.to_rgbs
         ):
             out = conv1(out, latent[:, i], noise=noise1)
             out = conv2(out, latent[:, i + 1], noise=noise2)
+            
+            feat_list.append(torch.flatten(out, start_dim=1))
             skip = to_rgb(out, latent[:, i + 2], skip)
-
+            rgb_img_list.append(skip[:batch])
             i += 2
 
         image = skip
 
         if return_latents:
-            return image, latent
-        elif return_features:
-            return image, out
-        else:
-            return image, None
+            returns = image, latent
+        if return_rgb_list:
+            returns = image,rgb_img_list
+        if return_features:
+            returns = image,feat_list
+        if return_rgb_fea:
+            return image, rgb_img_list,feat_list
+       # if return_latents:    distill mode  
+        #    return image, rgb_img_list,feat_list,latent
+
+        return returns
+
 
 
 class ConvLayer(nn.Sequential):

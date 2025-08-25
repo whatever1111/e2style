@@ -22,7 +22,7 @@ class IDLoss(nn.Module):
 
     def forward(self, y_hat, y):
         n_samples = y.shape[0]
-        cos_target = torch.ones((n_samples, 1)).float().cuda()
+        cos_target = torch.ones((n_samples)).float().cuda()
         loss = 0
         y_feats = self.extract_feats(y)  # Otherwise use the feature from there
         y_hat_feats = self.extract_feats(y_hat)
